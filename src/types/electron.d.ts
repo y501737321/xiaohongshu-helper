@@ -20,6 +20,10 @@ export interface AppConfig {
   nightModeStart: number
   nightModeEnd: number
   mockMode: boolean
+  targetCity: string
+  maxDaysAgo: number
+  adFilterWords: string[]
+  commentIntentWords: string[]
 }
 
 export interface EnvCheckResult {

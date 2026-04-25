@@ -6,6 +6,113 @@ const https = require('https')
 const http = require('http')
 const { URL } = require('url')
 
+// ─── MCP 服务器管理 ──────────────────────────────────────────
+const MCP_PORT = 18060
+const MCP_BASE_URL = `http://127.0.0.1:${MCP_PORT}`
+let mcpProcess = null
+
+function getMcpBinaryPath() {
+  // 打包后路径在 process.resourcesPath/bin/，开发时在 resources/bin/
+  const binName = process.platform === 'win32'
+    ? 'xiaohongshu-mcp-windows-amd64.exe'
+    : process.arch === 'arm64'
+      ? 'xiaohongshu-mcp-darwin-arm64'
+      : 'xiaohongshu-mcp-darwin-amd64'
+
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'bin', binName)
+  }
+  return path.join(__dirname, '..', 'resources', 'bin', binName)
+}
+
+function startMcpServer() {
+  const binPath = getMcpBinaryPath()
+  if (!fs.existsSync(binPath)) {
+    sendLog(`⚠️  MCP 二进制文件不存在: ${binPath}`, 'warn')
+    return
+  }
+
+  // 确保有执行权限
+  try { fs.chmodSync(binPath, '755') } catch (_) {}
+
+  // cookies 存储目录（userData 下）
+  const cookiesDir = path.join(app.getPath('userData'), 'xhs_cookies')
+  if (!fs.existsSync(cookiesDir)) fs.mkdirSync(cookiesDir, { recursive: true })
+
+  sendLog(`🚀 正在启动小红书 MCP 服务 (端口 ${MCP_PORT})...`, 'info')
+
+  mcpProcess = spawn(binPath, [], {
+    env: {
+      ...process.env,
+      PORT: String(MCP_PORT),
+      COOKIES_DIR: cookiesDir,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  mcpProcess.stdout.on('data', (d) => {
+    const line = d.toString().trim()
+    if (line) {
+      try { console.log('[MCP]', line) } catch (_) {}
+    }
+  })
+  mcpProcess.stderr.on('data', (d) => {
+    const line = d.toString().trim()
+    if (line) {
+      try { console.error('[MCP ERR]', line) } catch (_) {}
+    }
+  })
+  mcpProcess.on('exit', (code) => {
+    sendLog(`ℹ️  MCP 服务已退出 (code=${code})`, 'info')
+    mcpProcess = null
+  })
+  mcpProcess.on('error', (err) => {
+    sendLog(`❌ MCP 服务启动失败: ${err.message}`, 'error')
+    mcpProcess = null
+  })
+
+  // 等待服务就绪
+  waitForMcp(10).then((ok) => {
+    if (ok) {
+      sendLog('✅ 小红书 MCP 服务已就绪！', 'success')
+      checkEnvironment()
+    } else {
+      sendLog('❌ MCP 服务启动超时，请重启应用', 'error')
+    }
+  })
+}
+
+function stopMcpServer() {
+  if (mcpProcess) {
+    try { mcpProcess.kill('SIGTERM') } catch (_) {}
+    mcpProcess = null
+  }
+}
+
+async function waitForMcp(retries = 10, delayMs = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await httpRequest(`${MCP_BASE_URL}/health`, { timeout: 2000 })
+      if (res.status === 200) return true
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, delayMs))
+  }
+  return false
+}
+
+// ─── MCP HTTP 客户端 ─────────────────────────────────────────
+function mcpGet(path) {
+  return httpRequest(`${MCP_BASE_URL}${path}`, { timeout: 30000 })
+}
+
+function mcpPost(path, body) {
+  return httpRequest(
+    `${MCP_BASE_URL}${path}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeout: 60000 },
+    body
+  )
+}
+
 // ─── 路径工具 ──────────────────────────────────────────────
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 const isDev = !!VITE_DEV_SERVER_URL
@@ -15,16 +122,19 @@ const LOG_PATH = path.join(app.getPath('userData'), 'run.log')
 
 // ─── 默认配置 ──────────────────────────────────────────────
 const DEFAULT_CONFIG = {
-  keywords: ['寻找私教', '私教推荐', '产后恢复', '体态矫正', '减肥健身', '增肌塑形'],
-  intervalMinutes: 30,
+  keywords: ['求推荐私教', '想找私人教练', '求靠谱健身教练', '私教推荐', '产后恢复教练推荐'],
   llmApiKey: '',
   llmBaseUrl: 'https://api.deepseek.com',
   llmModel: 'deepseek-v4-flash',
   leadsDir: '',
   nightModeStart: 0,
   nightModeEnd: 7,
-  // 是否使用模拟数据（Phase 3 调试用）
   mockMode: false,
+  targetCity: '天津',
+  maxDaysAgo: 1,
+  intervalMinutes: 1440,
+  adFilterWords: ['接广告', '商务合作', '课程售价', '原价', '限时优惠', '私信领取', '代理加盟', '学员招募', '训练营报名', '品牌方'],
+  commentIntentWords: ['求推荐', '想找私教', '有私教推荐吗', '同城', '怎么收费', '多少钱', '在哪里', '能约课吗', '求教练', '有好的教练吗'],
 }
 
 // ─── 全局状态 ──────────────────────────────────────────────
@@ -34,7 +144,9 @@ let botInterval = null
 let isRunning = false
 let childProcesses = []
 const SEEN_IDS_PATH = path.join(app.getPath('userData'), 'seen_ids.json')
+const SEEN_USER_IDS_PATH = path.join(app.getPath('userData'), 'seen_user_ids.json')
 let seenNoteIds = loadSeenIds() // 去重：避免对同一笔记重复处理（持久化）
+let seenUserIds = loadSeenUserIds() // 去重：避免对同一潜在客户重复处理
 
 let stats = {
   runCount: 0,
@@ -79,6 +191,22 @@ function loadSeenIds() {
 function saveSeenIds() {
   try {
     fs.writeFileSync(SEEN_IDS_PATH, JSON.stringify([...seenNoteIds]), 'utf-8')
+  } catch (_) {}
+}
+
+function loadSeenUserIds() {
+  try {
+    if (fs.existsSync(SEEN_USER_IDS_PATH)) {
+      const arr = JSON.parse(fs.readFileSync(SEEN_USER_IDS_PATH, 'utf-8'))
+      return new Set(arr.slice(-50000)) // 保留较多用户ID
+    }
+  } catch (_) {}
+  return new Set()
+}
+
+function saveSeenUserIds() {
+  try {
+    fs.writeFileSync(SEEN_USER_IDS_PATH, JSON.stringify([...seenUserIds]), 'utf-8')
   } catch (_) {}
 }
 
@@ -156,7 +284,9 @@ function sendLog(message, type = 'info') {
   // 同时写文件日志
   const line = `[${new Date().toISOString()}] [${type.toUpperCase()}] ${message}\n`
   fs.appendFile(LOG_PATH, line, () => {})
-  console.log(`[${timestamp}] [${type.toUpperCase()}] ${message}`)
+  try {
+    console.log(`[${timestamp}] [${type.toUpperCase()}] ${message}`)
+  } catch (_) {}
 }
 
 function sendStats() {
@@ -231,7 +361,7 @@ function httpRequest(urlStr, options = {}, body = null) {
 // Phase 4: 真实业务逻辑
 // ══════════════════════════════════════════════════════════
 
-// ─── 4.1 小红书搜索（调用 xiaohongshu-skills CLI）──────────
+// ─── 4.1 小红书搜索（调用本地 MCP HTTP 服务）───────────────
 async function searchXiaohongshu(keyword) {
   const config = loadConfig()
   if (config.mockMode) {
@@ -239,22 +369,28 @@ async function searchXiaohongshu(keyword) {
   }
 
   try {
-    // xiaohongshu-skills CLI 命令
-    const cmd = `python3 -m xiaohongshu_skills search-feeds --keyword "${keyword}" --format json --limit 10`
-    const output = await execCommand(cmd, 60000)
-
-    // 解析 JSON 输出
-    let notes = []
-    // 尝试找到 JSON 数组
-    const jsonMatch = output.match(/\[[\s\S]*\]/)
-    if (jsonMatch) {
-      notes = JSON.parse(jsonMatch[0])
-    } else {
-      notes = JSON.parse(output)
+    const res = await mcpPost('/api/v1/feeds/search', { keyword, filters: {} })
+    if (res.status !== 200) {
+      throw new Error(`MCP 返回 ${res.status}`)
     }
-
-    // 过滤已处理过的笔记
-    return notes.filter((n) => !seenNoteIds.has(n.id || n.note_id))
+    const items = res.body?.data?.items || res.body?.data?.feeds || res.body?.data || []
+    const notes = Array.isArray(items) ? items : []
+    // 规范化字段
+    const normalized = notes.map((n) => {
+      // 如果数据结构包含 noteCard，从中提取有用信息
+      const card = n.noteCard || {}
+      return {
+        id: n.id || n.note_id || n.feed_id,
+        note_id: n.id || n.note_id || n.feed_id,
+        xsec_token: n.xsecToken || n.xsec_token || '',
+        title: card.displayTitle || n.title || n.desc || '',
+        desc: card.displayTitle || n.desc || n.title || '',
+        author: card.user?.nickname || card.user?.nickName || n.user?.nickname || n.author || '未知',
+        user: card.user || n.user || { id: n.user_id, nickname: n.author || '未知' },
+        ...n,
+      }
+    })
+    return normalized.filter((n) => !seenNoteIds.has(n.id))
   } catch (err) {
     sendLog(`⚠️  搜索"${keyword}"失败: ${err.message}`, 'warn')
     return []
@@ -262,50 +398,67 @@ async function searchXiaohongshu(keyword) {
 }
 
 // ─── 4.2 获取笔记详情 ──────────────────────────────────────
-async function getNoteDetail(noteId) {
+async function getNoteDetail(noteId, xsecToken) {
   const config = loadConfig()
   if (config.mockMode) {
     return { content: `[模拟详情] 笔记 ${noteId} 的完整内容...我一直想找一个专业的私教来帮我制定训练计划`, comments: [] }
   }
 
   try {
-    const cmd = `python3 -m xiaohongshu_skills get-feed-detail --note-id "${noteId}" --format json`
-    const output = await execCommand(cmd, 30000)
-    const jsonMatch = output.match(/\{[\s\S]*\}/)
-    if (jsonMatch) return JSON.parse(jsonMatch[0])
-    return JSON.parse(output)
+    const res = await mcpPost('/api/v1/feeds/detail', {
+      feed_id: noteId,
+      xsec_token: xsecToken || '',
+      load_all_comments: true,
+    })
+    if (res.status !== 200) throw new Error(`MCP 返回 ${res.status}`)
+    
+    // 从多层嵌套的数据结构中提取笔记内容和评论
+    const noteData = res.body?.data?.data?.note || res.body?.data?.note || {}
+    const commentsData = res.body?.data?.data?.comments || res.body?.data?.comments || []
+    
+    return {
+      content: noteData.desc || noteData.content || res.body?.data?.content || '',
+      comments: Array.isArray(commentsData) ? commentsData : [],
+      time: noteData.time || Date.now(), // 如果没有解析到时间则默认当前时间，避免被误判为太旧
+      ipLocation: noteData.ipLocation || ''
+    }
   } catch (err) {
     sendLog(`⚠️  获取笔记详情失败 ${noteId}: ${err.message}`, 'warn')
     return null
   }
 }
 
-// ─── 4.3 LLM 意向评估 ──────────────────────────────────────
-async function evaluateWithLLM(note, detail) {
+// ─── 4.3 LLM 批量意向评估 ──────────────────────────────────────
+async function batchEvaluateWithLLM(notesWithDetails) {
   const config = loadConfig()
+  
+  if (notesWithDetails.length === 0) return []
 
   if (config.mockMode || !config.llmApiKey) {
-    return mockLLMEval()
+    return notesWithDetails.map(item => ({
+      id: item.note.id,
+      ...mockLLMEval()
+    }))
   }
 
-  const content = [
-    `【标题】${note.title || note.desc || ''}`,
-    `【正文】${detail?.content || note.content || note.desc || ''}`,
-    `【评论摘要】${(detail?.comments || []).slice(0, 3).map((c) => c.content).join(' | ')}`,
-  ].join('\n')
+  const targetCity = config.targetCity || '天津'
+  const promptContent = notesWithDetails.map((item, idx) => {
+    return `--- 笔记 ID: ${item.note.id} ---
+【标题】${item.note.title || item.note.desc || ''}
+【IP属地】${item.detail?.ipLocation || '未知'}
+【正文】${item.detail?.content || item.note.content || item.note.desc || ''}
+【评论摘要】${(item.detail?.comments || []).slice(0, 3).map((c) => c.content).join(' | ')}`;
+  }).join('\n\n')
 
-  const prompt = `分析以下小红书笔记，判断发布者是否有真实的健身/减肥/体态调整需求，排除广告内容和卖课行为。
+  const prompt = `判断以下小红书笔记发布者是否有真实的健身私教需求，排除广告和卖课。
+目标城市：${targetCity}，IP属地匹配的优先级更高，但IP不匹配不代表排除（可能用VPN或在外地）。
 
-${content}
+评分：S=急迫找私教,有具体需求 A=明确需求,积极询问 B=意向不明 C=广告/卖课/无关
 
-打分标准：
-- S：极度渴望，用户强烈表达寻找私教/训练计划的意愿，有明确时间地点需求
-- A：有明确需求，积极询问或表达想要专业指导
-- B：随便问问，泛泛而谈，意向不明确
-- C：广告/卖课/无关内容
+${promptContent}
 
-请返回严格的 JSON 格式（不要有任何额外文字）：
-{"score":"X","summary":"一句话总结用户需求","author_intent":"判断原因"}`
+返回JSON数组，无额外文字：
+[{"id":"笔记ID","score":"X","summary":"一句话需求"}]`
 
   try {
     const baseUrl = (config.llmBaseUrl || 'https://api.deepseek.com').replace(/\/$/, '')
@@ -317,13 +470,13 @@ ${content}
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${config.llmApiKey}`,
         },
-        timeout: 30000,
+        timeout: 60000,
       },
       {
         model: config.llmModel || 'deepseek-v4-flash',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 300,
+        max_tokens: 2000,
       }
     )
 
@@ -332,14 +485,19 @@ ${content}
     }
 
     const text = res.body.choices?.[0]?.message?.content || ''
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    const jsonMatch = text.match(/\[[\s\S]*\]/)
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0])
     }
     throw new Error('LLM 返回格式无效')
   } catch (err) {
-    sendLog(`⚠️  LLM 评估失败: ${err.message}`, 'warn')
-    return { score: 'B', summary: 'AI 评估失败，跳过', author_intent: '' }
+    sendLog(`⚠️  LLM 批量评估失败: ${err.message}`, 'warn')
+    return notesWithDetails.map(item => ({
+      id: item.note.id,
+      score: 'B', 
+      summary: 'AI 评估失败，跳过', 
+      author_intent: ''
+    }))
   }
 }
 
@@ -351,6 +509,37 @@ async function syncLead(note, detail, assessment) {
     return true
   }
   return await saveLeadToLocal(note, detail, assessment)
+}
+
+// ─── 4.6 评论区客户挖掘（零 LLM 开销）─────────────────────
+function extractCommentLeads(note, comments, config) {
+  const intentWords = config.commentIntentWords || []
+  if (intentWords.length === 0 || !Array.isArray(comments)) return []
+
+  const leads = []
+  for (const comment of comments) {
+    const text = comment.content || ''
+    const userId = comment.userInfo?.userId || comment.userId || ''
+    const nickname = comment.userInfo?.nickname || comment.nickName || comment.nickname || '评论用户'
+
+    if (!text || !userId) continue
+    if (seenUserIds.has(userId)) continue
+
+    const matched = intentWords.find(w => text.includes(w))
+    if (matched) {
+      seenUserIds.add(userId)
+      leads.push({
+        user: { id: userId, nickname },
+        author: nickname,
+        id: note.id,
+        note_id: note.id,
+        title: note.title || note.desc || '',
+        _keyword: note._keyword || '',
+        _commentText: text.substring(0, 80),
+      })
+    }
+  }
+  return leads
 }
 
 // ══════════════════════════════════════════════════════════
@@ -398,6 +587,8 @@ async function runBotCycle(config) {
   const modeLabel = config.mockMode ? '[模拟模式] ' : ''
   sendLog(`🚀 ${modeLabel}开始第 ${stats.runCount} 轮抓取 | 关键词数: ${config.keywords.length}`, 'info')
 
+  let allNewNotes = []
+
   for (let ki = 0; ki < config.keywords.length; ki++) {
     if (!isRunning) break
     const keyword = config.keywords[ki]
@@ -405,62 +596,122 @@ async function runBotCycle(config) {
 
     // 搜索
     const notes = await searchXiaohongshu(keyword)
-    notes.forEach((n) => { n._keyword = keyword })
+    const adWords = config.adFilterWords || []
 
-    if (notes.length === 0) {
+    let newCount = 0
+    let adSkipped = 0
+    notes.forEach((note) => {
+      note._keyword = keyword
+      const noteId = note.id || note.note_id
+      const authorId = note.user?.userId || note.user?.id || note.author || '未知'
+
+      // 前置广告过滤：标题命中广告词直接跳过，不获取详情不送LLM
+      if (adWords.length > 0) {
+        const text = ((note.title || '') + ' ' + (note.desc || '')).toLowerCase()
+        if (adWords.some(w => text.includes(w.toLowerCase()))) {
+          adSkipped++
+          return
+        }
+      }
+
+      // 比对笔记ID和用户ID
+      if (!seenNoteIds.has(noteId) && !seenUserIds.has(authorId)) {
+        allNewNotes.push(note)
+        seenNoteIds.add(noteId)
+        newCount++
+      }
+    })
+
+    if (newCount === 0 && adSkipped === 0) {
       sendLog(`📭 "${keyword}" 无新笔记`, 'info')
     } else {
-      sendLog(`📋 发现 ${notes.length} 条新笔记，开始逐一评估...`, 'info')
-      stats.totalLeads += notes.length
-      sendStats()
+      sendLog(`📋 "${keyword}" 发现 ${newCount} 条新笔记${adSkipped > 0 ? `，过滤 ${adSkipped} 条广告` : ''}`, 'info')
     }
 
-    for (let ni = 0; ni < notes.length; ni++) {
-      if (!isRunning) break
-      const note = notes[ni]
-      const noteId = note.id || note.note_id || `note_${ni}`
+    if (ki < config.keywords.length - 1) {
+      await randomDelay(5000, 10000) // 关键词间延迟
+    }
+  }
 
-      // 标记为已见并持久化
-      seenNoteIds.add(noteId)
-      saveSeenIds()
+  saveSeenIds()
+  saveSeenUserIds()
 
-      sendLog(`🔬 [${ni + 1}/${notes.length}] 评估: ${note.author || note.user?.nickname || '未知'} - "${(note.title || note.desc || '').substring(0, 25)}..."`, 'info')
+  if (allNewNotes.length === 0) {
+    sendLog(`✨ 第 ${stats.runCount} 轮完成 | 累计线索: ${stats.totalLeads} | 高意向: ${stats.highIntentLeads}`, 'success')
+    return
+  }
 
-      // 获取详情（加随机延迟防封）
-      await randomDelay(2000, 5000)
-      const detail = await getNoteDetail(noteId)
+  sendLog(`📦 准备获取 ${allNewNotes.length} 条新笔记的详情...`, 'info')
 
-      // AI 评估
-      const assessment = await evaluateWithLLM(note, detail)
-      sendLog(`🤖 AI评分: [${assessment.score}] ${assessment.summary}`, assessment.score === 'S' || assessment.score === 'A' ? 'success' : 'info')
+  let notesWithDetails = []
+  const maxDaysMs = (config.maxDaysAgo || 1) * 24 * 60 * 60 * 1000
+  const cutoffTime = Date.now() - maxDaysMs
+
+  for (let ni = 0; ni < allNewNotes.length; ni++) {
+    if (!isRunning) break
+    const note = allNewNotes[ni]
+    sendLog(`[${ni + 1}/${allNewNotes.length}] 获取详情: ${note.author} - "${(note.title || note.desc || '').substring(0, 15)}..."`, 'info')
+
+    await randomDelay(2000, 5000)
+    const detail = await getNoteDetail(note.id, note.xsec_token)
+    
+    // 检查时间戳：过滤掉超过规定天数的旧笔记
+    if (detail && detail.time && detail.time < cutoffTime) {
+      sendLog(`⏳ 笔记过旧已跳过 (超过${config.maxDaysAgo || 1}天): ${note.author}`, 'info')
+      continue
+    }
+
+    // 记录 IP 属地信息，交由 AI 综合判断
+    if (detail && detail.ipLocation) {
+      sendLog(`📍 IP属地: ${detail.ipLocation} (${detail.ipLocation.includes(config.targetCity || '天津') ? '匹配' : '不匹配'})，交由 AI 评估权重`, 'info')
+    }
+
+    // 记录用户ID以防后续重复联系
+    const authorId = note.user?.userId || note.user?.id || note.author || '未知'
+    seenUserIds.add(authorId)
+
+    notesWithDetails.push({ note, detail })
+
+    // 评论区客户挖掘（零 LLM 开销）
+    if (detail && detail.comments) {
+      const commentLeads = extractCommentLeads(note, detail.comments, config)
+      for (const lead of commentLeads) {
+        const commentAssessment = { score: 'C-评论', summary: lead._commentText, author_intent: '' }
+        await saveLeadToLocal(lead, detail, commentAssessment)
+        sendLog(`💬 评论线索: ${lead.author} - "${lead._commentText.substring(0, 30)}..."`, 'success')
+      }
+      if (commentLeads.length > 0) {
+        sendLog(`💬 从评论区发现 ${commentLeads.length} 条潜在客户`, 'success')
+      }
+    }
+  }
+
+  if (notesWithDetails.length > 0) {
+    stats.totalLeads += notesWithDetails.length
+    sendStats()
+    
+    sendLog(`🤖 开始将 ${notesWithDetails.length} 条有效笔记发送给大模型进行批量评级...`, 'info')
+    const batchAssessments = await batchEvaluateWithLLM(notesWithDetails)
+
+    for (const item of notesWithDetails) {
+      const { note, detail } = item
+      const assessment = batchAssessments.find(a => String(a.id) === String(note.id)) || { score: 'B', summary: 'AI 未返回评估' }
+      
+      sendLog(`🤖 结果 [${assessment.score}]: ${note.author} - ${assessment.summary}`, assessment.score === 'S' || assessment.score === 'A' ? 'success' : 'info')
 
       if (assessment.score === 'S' || assessment.score === 'A') {
         stats.highIntentLeads++
         sendStats()
 
-        // 写入本地 CSV
-        sendLog(`📤 写入本地线索文件...`, 'info')
         const synced = await syncLead(note, detail, assessment)
         if (synced) {
           sendLog(`✅ 线索 [${assessment.score}] 已入库: ${note.author || '未知'}`, 'success')
         }
 
-        // S 级：桌面通知
         if (assessment.score === 'S') {
           sendDesktopAlert(note, assessment)
-          sendLog(`🔔 S级高意向！桌面通知已发送`, 'success')
         }
-      } else {
-        sendLog(`⏭️  跳过低意向 [${assessment.score}]: ${note.author || '未知'}`, 'info')
       }
-
-      if (ni < notes.length - 1) {
-        await randomDelay(5000, 12000) // 笔记间延迟
-      }
-    }
-
-    if (ki < config.keywords.length - 1) {
-      await randomDelay(8000, 20000) // 关键词间延迟
     }
   }
 
@@ -508,26 +759,34 @@ function stopBot() {
   if (mainWindow) mainWindow.webContents.send('bot-status', false)
 }
 
-// ─── 环境检测 ──────────────────────────────────────────────
-function checkEnvironment() {
-  const checks = [
-    { cmd: 'python3 --version', name: 'Python 3' },
-    { cmd: 'python3 -c "import xiaohongshu_skills; print(\'ok\')"', name: 'xiaohongshu-skills' },
-  ]
-
+// ─── 环境检测（检查 MCP 服务是否就绪）─────────────────────
+async function checkEnvironment() {
   const results = []
-  let pending = checks.length
 
-  checks.forEach(({ cmd, name }) => {
-    exec(cmd, { timeout: 10000 }, (err, stdout) => {
-      const version = stdout?.trim().split('\n')[0] || ''
-      results.push({ name, ok: !err && !version.includes('not found'), version })
-      pending--
-      if (pending === 0 && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('env-check', results)
-      }
-    })
+  // 检测 MCP 二进制是否存在
+  const binPath = getMcpBinaryPath()
+  const binExists = fs.existsSync(binPath)
+  results.push({
+    name: 'xiaohongshu-mcp',
+    ok: binExists,
+    version: binExists ? '内置版 v2026.04.17' : '未找到二进制文件',
   })
+
+  // 检测 MCP 服务是否在线
+  try {
+    const res = await httpRequest(`${MCP_BASE_URL}/health`, { timeout: 3000 })
+    results.push({
+      name: 'MCP 服务',
+      ok: res.status === 200,
+      version: res.status === 200 ? `运行中 (端口 ${MCP_PORT})` : `异常 (${res.status})`,
+    })
+  } catch (_) {
+    results.push({ name: 'MCP 服务', ok: false, version: '未运行' })
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('env-check', results)
+  }
 }
 
 // ─── 创建窗口 ──────────────────────────────────────────────
@@ -556,7 +815,6 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
-    checkEnvironment()
     sendStats()
     sendLog('🌸 小红书获客助手 v1.0 已启动！', 'success')
     sendLog('💡 请前往"设置中心"配置关键词和 LLM API Key，再点击"开始监控"', 'info')
@@ -565,6 +823,9 @@ function createWindow() {
     if (config.mockMode) {
       sendLog('ℹ️  当前为模拟模式，数据不会真实抓取', 'warn')
     }
+
+    // 启动内置 MCP 服务
+    startMcpServer()
   })
 
   mainWindow.on('closed', () => {
@@ -581,6 +842,7 @@ ipcMain.handle('get-stats', () => stats)
 ipcMain.handle('reset-stats', () => {
   stats = { runCount: 0, totalLeads: 0, highIntentLeads: 0 }
   seenNoteIds.clear()
+  seenUserIds.clear()
   sendStats()
   return { ok: true }
 })
@@ -597,43 +859,77 @@ ipcMain.handle('open-leads-folder', () => {
   return { ok: true }
 })
 
-// ─── 小红书扫码登录（内置浏览器窗口）───────────────────────
-const XHS_COOKIES_PATH = path.join(app.getPath('userData'), 'xhs_cookies.json')
+// ─── 小红书扫码登录（MCP 二维码 API）─────────────────────────
+async function openXhsLogin() {
+  // 向 MCP 服务请求登录二维码
+  let qrcodeBase64 = ''
+  try {
+    const res = await mcpGet('/api/v1/login/qrcode')
+    if (res.status === 200 && res.body?.data?.img) {
+      qrcodeBase64 = res.body.data.img
+    } else {
+      sendLog(`❌ 获取登录二维码失败: 状态码 ${res.status}, body: ${JSON.stringify(res.body).substring(0, 200)}`, 'error')
+      return
+    }
+  } catch (err) {
+    sendLog(`❌ 请求登录二维码失败: ${err.message}`, 'error')
+    return
+  }
 
-function openXhsLogin() {
+  // 创建二维码展示窗口
   const loginWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    width: 360,
+    height: 440,
     title: '小红书登录 - 请用手机 App 扫码',
+    resizable: false,
     autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+    backgroundColor: '#0f0f1a',
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
   })
 
-  loginWindow.loadURL('https://www.xiaohongshu.com')
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>小红书登录</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#0f0f1a; color:#e0e0e0; font-family:-apple-system,sans-serif;
+           display:flex; flex-direction:column; align-items:center; justify-content:center;
+           height:100vh; gap:16px; }
+    img { width:220px; height:220px; border-radius:12px; border:2px solid rgba(255,68,68,.4); }
+    h3 { font-size:15px; color:#ff4444; }
+    p  { font-size:12px; color:#888; text-align:center; line-height:1.6; max-width:260px; }
+    .tip { font-size:11px; color:#555; }
+  </style>
+</head>
+<body>
+  <h3>🌸 小红书登录</h3>
+  <img src="${qrcodeBase64}" />
+  <p>请用小红书 App 扫描二维码登录<br/>登录成功后此窗口会自动关闭</p>
+  <p class="tip">二维码有效期约3分钟，过期请重新点击登录</p>
+</body></html>`
 
-  // 定时检查是否已登录（检测关键 cookie）
-  const checkInterval = setInterval(async () => {
+  loginWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  sendLog('📱 小红书登录二维码已弹出，请用 App 扫码', 'info')
+
+  // 轮询登录状态
+  let loginCheckCount = 0
+  const checkTimer = setInterval(async () => {
+    loginCheckCount++
+    if (loginCheckCount > 90) { clearInterval(checkTimer); return }
     try {
-      const cookies = await loginWindow.webContents.session.cookies.get({ domain: '.xiaohongshu.com' })
-      const hasLogin = cookies.some((c) => c.name === 'web_session' || c.name === 'a1')
-      if (hasLogin) {
-        // 保存所有 cookies
-        const allCookies = await loginWindow.webContents.session.cookies.get({})
-        const xhsCookies = allCookies.filter((c) => c.domain && c.domain.includes('xiaohongshu'))
-        fs.writeFileSync(XHS_COOKIES_PATH, JSON.stringify(xhsCookies, null, 2), 'utf-8')
-        sendLog('✅ 小红书登录成功！Cookies 已保存', 'success')
-        clearInterval(checkInterval)
-        loginWindow.close()
+      const res = await mcpGet('/api/v1/login/status')
+      if (res.status === 200 && res.body?.data?.is_logged_in) {
+        sendLog('✅ 小红书登录成功！', 'success')
+        clearInterval(checkTimer)
+        if (!loginWindow.isDestroyed()) loginWindow.close()
+        checkEnvironment()
       }
     } catch (_) {}
   }, 2000)
 
-  loginWindow.on('closed', () => {
-    clearInterval(checkInterval)
-  })
+  loginWindow.on('closed', () => clearInterval(checkTimer))
 }
 
 ipcMain.handle('xhs-login', () => {
@@ -641,33 +937,33 @@ ipcMain.handle('xhs-login', () => {
   return { ok: true }
 })
 
-ipcMain.handle('check-xhs-login', () => {
+
+ipcMain.handle('check-xhs-login', async () => {
   sendLog('🔑 正在检查小红书登录状态...', 'info')
-  // 优先检查本地 cookies 文件
-  if (fs.existsSync(XHS_COOKIES_PATH)) {
-    try {
-      const cookies = JSON.parse(fs.readFileSync(XHS_COOKIES_PATH, 'utf-8'))
-      if (cookies && cookies.length > 0) {
-        sendLog('✅ 小红书登录正常（已保存登录凭证）', 'success')
-        return { ok: true }
-      }
-    } catch (_) {}
+  try {
+    const res = await mcpGet('/api/v1/login/status')
+    if (res.status === 200 && res.body?.data?.is_logged_in) {
+      sendLog('✅ 小红书登录正常', 'success')
+    } else {
+      sendLog('❌ 小红书未登录，请点击设置中的「扫码登录」按钮', 'error')
+    }
+  } catch (err) {
+    sendLog(`❌ 检查登录状态失败: ${err.message}`, 'warn')
   }
-  sendLog('❌ 小红书未登录，请点击设置中的「扫码登录」按钮', 'error')
   return { ok: true }
 })
 
-ipcMain.handle('install-xhs-skills', () => {
-  sendLog('📦 正在安装 xiaohongshu-skills，请稍候...', 'info')
-  exec('pip3 install xiaohongshu-skills', { timeout: 120000 }, (err, stdout, stderr) => {
-    if (err) {
-      sendLog(`❌ 安装失败: ${stderr || err.message}`, 'error')
-      sendLog('💡 请尝试手动运行: pip3 install xiaohongshu-skills', 'warn')
-    } else {
-      sendLog('✅ xiaohongshu-skills 安装成功！', 'success')
-      checkEnvironment()
-    }
-  })
+
+ipcMain.handle('install-xhs-skills', async () => {
+  // MCP 服务器已内置，无需安装
+  // 如果服务未运行则重新启动
+  if (!mcpProcess) {
+    sendLog('🔄 正在重新启动内置 MCP 服务...', 'info')
+    startMcpServer()
+  } else {
+    sendLog('✅ 小红书 MCP 服务已在运行中', 'success')
+    checkEnvironment()
+  }
   return { ok: true }
 })
 
@@ -691,6 +987,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopBot()
+  stopMcpServer()
   if (process.platform !== 'darwin') app.quit()
 })
 
@@ -700,4 +997,5 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   stopBot()
+  stopMcpServer()
 })

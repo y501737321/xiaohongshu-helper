@@ -23,7 +23,6 @@
   ],
   "mac": {
     "category": "public.app-category.productivity",
-    "icon": "build/icon.icns",
     "hardenedRuntime": true,
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist",
@@ -40,23 +39,18 @@
     ]
   },
   "win": {
-    "icon": "build/icon.ico",
     "target": [
       { "target": "nsis", "arch": ["x64"] }
     ]
   },
   "nsis": {
     "oneClick": false,
-    "allowDirChange": true,
-    "installerIcon": "build/icon.ico",
-    "uninstallerIcon": "build/icon.ico",
-    "installerHeaderIcon": "build/icon.ico",
+    "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
     "shortcutName": "小红书获客助手"
   },
   "linux": {
-    "icon": "build/icon.png",
     "target": ["AppImage", "deb"]
   },
   "publish": null

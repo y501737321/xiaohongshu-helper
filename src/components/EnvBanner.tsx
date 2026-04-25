@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { CheckCircle, XCircle, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import type { EnvCheckResult } from '../types/electron'
 
 export default function EnvBanner() {
@@ -10,7 +10,6 @@ export default function EnvBanner() {
   const isElectron = typeof window !== 'undefined' && !!window.electron
 
   const hasIssue = results.length > 0 && results.some((r) => !r.ok)
-  const xhsSkillsMissing = results.some((r) => r.name === 'xiaohongshu-skills' && !r.ok)
 
   useEffect(() => {
     if (!isElectron) return
@@ -33,6 +32,8 @@ export default function EnvBanner() {
     if (!isElectron) return
     setInstalling(true)
     await window.electron.installXhsSkills()
+    // 重新检测
+    setTimeout(() => runCheck(), 3000)
   }
 
   if (results.length === 0) return null
@@ -79,10 +80,7 @@ export default function EnvBanner() {
               }
               <span style={{ color: r.ok ? 'var(--text-secondary)' : 'var(--error)', fontWeight: 500 }}>{r.name}</span>
               {r.version && <span style={{ color: 'var(--text-muted)' }}>{r.version}</span>}
-              {!r.ok && r.name === 'Python 3' && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>→ 请安装 Python 3.9+</span>
-              )}
-              {!r.ok && r.name === 'xiaohongshu-skills' && (
+              {!r.ok && r.name === 'MCP 服务' && (
                 <button
                   className="btn-secondary"
                   onClick={handleInstallXhs}
@@ -90,8 +88,8 @@ export default function EnvBanner() {
                   style={{ padding: '2px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}
                 >
                   {installing
-                    ? <><RefreshCw size={10} className="spin" /> 安装中...</>
-                    : <><Download size={10} /> 一键安装</>
+                    ? <><RefreshCw size={10} className="spin" /> 启动中...</>
+                    : <><RefreshCw size={10} /> 重启服务</>
                   }
                 </button>
               )}
