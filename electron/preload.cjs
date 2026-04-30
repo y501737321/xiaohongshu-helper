@@ -11,17 +11,23 @@ contextBridge.exposeInMainWorld('electron', {
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
 
   // ── 统计数据 ─────────────────────────────────────────────
-  getStats:   () => ipcRenderer.invoke('get-stats'),
-  resetStats: () => ipcRenderer.invoke('reset-stats'),
+  getStats:      () => ipcRenderer.invoke('get-stats'),
+  resetDedupe:   () => ipcRenderer.invoke('reset-dedupe'),
+  getDailyStats: () => ipcRenderer.invoke('get-daily-stats'),
 
   // ── 环境与登录检测 ────────────────────────────────────────
   checkEnv:          () => ipcRenderer.invoke('check-env'),
   checkXhsLogin:     () => ipcRenderer.invoke('check-xhs-login'),
+  getXhsLoginState:  () => ipcRenderer.invoke('get-xhs-login-state'),
+  getXhsQrCode:      () => ipcRenderer.invoke('get-xhs-qrcode'),
   xhsLogin:          () => ipcRenderer.invoke('xhs-login'),
   installXhsSkills:  () => ipcRenderer.invoke('install-xhs-skills'),
   selectLeadsDir:    () => ipcRenderer.invoke('select-leads-dir'),
   openLogFile:       () => ipcRenderer.invoke('open-log-file'),
   openLeadsFolder:   () => ipcRenderer.invoke('open-leads-folder'),
+  resetWatermarks:   () => ipcRenderer.invoke('reset-watermarks'),
+  getKeywordStats:   () => ipcRenderer.invoke('get-keyword-stats'),
+  resetKeywordStats: () => ipcRenderer.invoke('reset-keyword-stats'),
 
   // ── 事件监听（后端 → 前端推送）───────────────────────────
   onLog:       (cb) => ipcRenderer.on('log',        (_, v) => cb(v)),

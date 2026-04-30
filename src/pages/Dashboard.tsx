@@ -1,14 +1,27 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Play, Square, RotateCcw, Activity, Target, TrendingUp, Terminal, FolderOpen } from 'lucide-react'
-import type { LogEntry, Stats } from '../types/electron'
+import { Play, Square, Terminal, FolderOpen, BarChart3, CheckCircle, QrCode, RefreshCw, UserRound } from 'lucide-react'
+import type { LogEntry, Stats, DailyStatEntry, KeywordStat } from '../types/electron'
 import EnvBanner from '../components/EnvBanner'
+import Heatmap from '../components/Heatmap'
 
-export default function Dashboard() {
+interface DashboardProps {
+  logs: LogEntry[]
+}
+
+export default function Dashboard({ logs }: DashboardProps) {
   const [isRunning, setIsRunning] = useState(false)
-  const [logs, setLogs] = useState<LogEntry[]>([])
   const [stats, setStats] = useState<Stats>({ runCount: 0, totalLeads: 0, highIntentLeads: 0 })
+  const [dailyStats, setDailyStats] = useState<Record<string, DailyStatEntry>>({})
+  const [kwStats, setKwStats] = useState<Record<string, KeywordStat>>({})
   const [loading, setLoading] = useState(false)
+  const [loginStatus, setLoginStatus] = useState<'unknown' | 'checking' | 'logged-in' | 'logged-out' | 'error'>('unknown')
+  const [loginName, setLoginName] = useState('')
+  const [qrImage, setQrImage] = useState('')
+  const [qrExpiresAt, setQrExpiresAt] = useState(0)
+  const [qrSecondsLeft, setQrSecondsLeft] = useState(0)
+  const [qrRefreshing, setQrRefreshing] = useState(false)
   const logEndRef = useRef<HTMLDivElement>(null)
+  const qrLoadingRef = useRef(false)
   const isElectron = typeof window !== 'undefined' && !!window.electron
 
   // ── 初始化 ─────────────────────────────────────────────
@@ -18,13 +31,15 @@ export default function Dashboard() {
     // 获取初始状态
     window.electron.getStatus().then(({ isRunning }) => setIsRunning(isRunning))
     window.electron.getStats().then(setStats)
+    window.electron.getDailyStats().then(setDailyStats)
+    window.electron.getKeywordStats().then(setKwStats)
 
-    // 注册事件监听
-    window.electron.onLog((entry) => {
-      setLogs((prev) => [...prev.slice(-200), entry]) // 最多保留 200 条
+    // 注册事件监听（log 已由 App 层管理）
+    window.electron.onStats((newStats) => {
+      setStats(newStats)
+      window.electron.getDailyStats().then(setDailyStats)
+      window.electron.getKeywordStats().then(setKwStats)
     })
-
-    window.electron.onStats((newStats) => setStats(newStats))
 
     window.electron.onBotStatus((running) => {
       setIsRunning(running)
@@ -32,11 +47,83 @@ export default function Dashboard() {
     })
 
     return () => {
-      window.electron.removeAllListeners('log')
       window.electron.removeAllListeners('stats')
       window.electron.removeAllListeners('bot-status')
     }
   }, [isElectron])
+
+  const refreshLoginState = useCallback(async () => {
+    if (!isElectron) {
+      setLoginStatus('error')
+      return
+    }
+    setLoginStatus((prev) => prev === 'logged-in' ? prev : 'checking')
+    const state = await window.electron.getXhsLoginState()
+    if (state.loggedIn) {
+      setLoginStatus('logged-in')
+      setLoginName(state.username || '已登录账号')
+      setQrImage('')
+      setQrExpiresAt(0)
+      setQrSecondsLeft(0)
+    } else if (state.ok) {
+      setLoginStatus('logged-out')
+      setLoginName('')
+    } else {
+      setLoginStatus('error')
+    }
+  }, [isElectron])
+
+  const loadQrCode = useCallback(async () => {
+    if (!isElectron || qrLoadingRef.current) return
+    qrLoadingRef.current = true
+    setQrRefreshing(true)
+    setLoginStatus('checking')
+    try {
+      const result = await window.electron.getXhsQrCode()
+      if (result.loggedIn) {
+        setLoginStatus('logged-in')
+        setLoginName(result.username || '已登录账号')
+        setQrImage('')
+        setQrExpiresAt(0)
+        setQrSecondsLeft(0)
+      } else if (result.ok && result.img) {
+        const ttl = Math.max(30, Number(result.timeout || 180))
+        const expiresAt = Number(result.expiresAt || Date.now() + ttl * 1000)
+        setLoginStatus('logged-out')
+        setQrImage(result.img)
+        setQrExpiresAt(expiresAt)
+        setQrSecondsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)))
+      } else {
+        setLoginStatus('error')
+      }
+    } finally {
+      qrLoadingRef.current = false
+      setQrRefreshing(false)
+    }
+  }, [isElectron])
+
+  useEffect(() => {
+    refreshLoginState()
+  }, [refreshLoginState])
+
+  useEffect(() => {
+    if (!isElectron || loginStatus !== 'logged-out') return
+    if (!qrImage) loadQrCode()
+    const timer = setInterval(refreshLoginState, 2500)
+    return () => clearInterval(timer)
+  }, [isElectron, loginStatus, qrImage, loadQrCode, refreshLoginState])
+
+  useEffect(() => {
+    if (!isElectron || !qrImage || loginStatus === 'logged-in') return
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((qrExpiresAt - Date.now()) / 1000))
+      setQrSecondsLeft(remaining)
+      if (remaining <= 0 && !qrLoadingRef.current) loadQrCode()
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [isElectron, qrImage, qrExpiresAt, loginStatus, loadQrCode])
 
   // ── 滚动到底部 ──────────────────────────────────────────
   useEffect(() => {
@@ -54,12 +141,6 @@ export default function Dashboard() {
     }
   }, [isRunning, isElectron])
 
-  const handleResetStats = useCallback(async () => {
-    if (!isElectron) return
-    await window.electron.resetStats()
-    setLogs([])
-  }, [isElectron])
-
   const logColorClass = (type: LogEntry['type']) => {
     switch (type) {
       case 'success': return 'log-success'
@@ -68,11 +149,6 @@ export default function Dashboard() {
       default: return 'log-info'
     }
   }
-
-  const highIntentRate =
-    stats.totalLeads > 0
-      ? Math.round((stats.highIntentLeads / stats.totalLeads) * 100)
-      : 0
 
   return (
     <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -106,16 +182,6 @@ export default function Dashboard() {
           </button>
 
           <button
-            id="reset-stats-btn"
-            className="btn-secondary"
-            onClick={handleResetStats}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-          >
-            <RotateCcw size={14} />
-            重置数据
-          </button>
-
-          <button
             id="toggle-bot-btn"
             className={`btn-control ${isRunning ? 'btn-stop' : 'btn-start'}`}
             onClick={handleToggle}
@@ -133,37 +199,118 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── 数据简报 ──────────────────────────────────────── */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <Activity size={16} style={{ color: 'var(--info)' }} />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>今日运行次数</span>
+      {/* ── 数据概览 + 账号状态 ──────────────────────────── */}
+      <div className="overview-grid">
+        <Heatmap data={dailyStats} />
+        <section className="xhs-account-card">
+          <div className="xhs-account-header">
+            <span className="card-title">
+              <UserRound size={15} />
+              小红书账号
+            </span>
+            <button className="icon-text-btn" onClick={refreshLoginState}>
+              <RefreshCw size={13} className={loginStatus === 'checking' ? 'spin' : ''} />
+              检测
+            </button>
           </div>
-          <div className="stat-value">{stats.runCount}</div>
-          <div className="stat-label">轮次</div>
-        </div>
 
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <Target size={16} style={{ color: 'var(--warning)' }} />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>发现线索总数</span>
+          <div className={`xhs-login-state ${loginStatus === 'logged-in' ? 'ok' : 'warn'}`}>
+            {loginStatus === 'logged-in' ? <CheckCircle size={18} /> : <QrCode size={18} />}
+            <div>
+              <div className="xhs-login-title">
+                {loginStatus === 'logged-in' ? '已登录' : loginStatus === 'checking' ? '正在检测' : '未登录'}
+              </div>
+              <div className="xhs-login-subtitle">
+                {loginStatus === 'logged-in'
+                  ? loginName
+                  : isElectron ? '用小红书 App 扫码后开始抓取' : '请在桌面端检测登录状态'}
+              </div>
+            </div>
           </div>
-          <div className="stat-value">{stats.totalLeads}</div>
-          <div className="stat-label">条笔记</div>
-        </div>
 
-        <div className="stat-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <TrendingUp size={16} style={{ color: 'var(--success)' }} />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>高意向线索 (S/A)</span>
+          {loginStatus !== 'logged-in' && (
+            <div className="xhs-qr-box">
+              {qrImage ? (
+                <>
+                  <img src={qrImage} alt="小红书登录二维码" />
+                  <div className={`xhs-qr-countdown ${qrSecondsLeft <= 15 ? 'warn' : ''}`}>
+                    {qrRefreshing ? '正在刷新二维码...' : `剩余 ${qrSecondsLeft}s 自动刷新`}
+                  </div>
+                </>
+              ) : (
+                <button className="btn-secondary" onClick={loadQrCode} disabled={!isElectron || loginStatus === 'checking'}>
+                  获取登录二维码
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="xhs-mini-stats">
+            <div>
+              <span>{stats.runCount}</span>
+              <label>运行次数</label>
+            </div>
+            <div>
+              <span>{stats.totalLeads}</span>
+              <label>线索总数</label>
+            </div>
+            <div>
+              <span>{stats.highIntentLeads}</span>
+              <label>高意向</label>
+            </div>
           </div>
-          <div className="stat-value" style={{ color: 'var(--success)' }}>
-            {stats.highIntentLeads}
-          </div>
-          <div className="stat-label">已保存至本地 · 转化率 {highIntentRate}%</div>
-        </div>
+        </section>
       </div>
+
+      {/* ── 关键词表现 ─────────────────────────────────────── */}
+      {Object.keys(kwStats).length > 0 && (
+        <div>
+          <div className="card-header">
+            <span className="card-title">
+              <BarChart3 size={15} />
+              关键词表现
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{Object.keys(kwStats).length} 个关键词</span>
+          </div>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-muted)', fontWeight: 600 }}>关键词</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 600 }}>搜索</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--success)', fontWeight: 600 }}>S</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--info)', fontWeight: 600 }}>A</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--text-muted)', fontWeight: 600 }}>B</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--error)', fontWeight: 600 }}>C</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'center', color: 'var(--warning)', fontWeight: 600 }}>产出率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(kwStats)
+                  .sort(([, a], [, b]) => {
+                    const rateA = a.searches > 0 ? (a.leads_s * 3 + a.leads_a) / a.searches : 0
+                    const rateB = b.searches > 0 ? (b.leads_s * 3 + b.leads_a) / b.searches : 0
+                    return rateB - rateA
+                  })
+                  .map(([kw, stat]) => {
+                    const rate = stat.searches > 0 ? ((stat.leads_s * 3 + stat.leads_a) / stat.searches).toFixed(2) : '-'
+                    return (
+                      <tr key={kw} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '8px 14px', color: 'var(--text-primary)' }}>{kw}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: 'var(--text-muted)' }}>{stat.searches}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: stat.leads_s > 0 ? 'var(--success)' : 'var(--text-muted)' }}>{stat.leads_s}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: stat.leads_a > 0 ? 'var(--info)' : 'var(--text-muted)' }}>{stat.leads_a}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: 'var(--text-muted)' }}>{stat.leads_b}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: stat.leads_c > 0 ? 'var(--error)' : 'var(--text-muted)' }}>{stat.leads_c}</td>
+                        <td style={{ padding: '8px', textAlign: 'center', color: 'var(--warning)', fontWeight: 600 }}>{rate}</td>
+                      </tr>
+                    )
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── 实时日志终端 ──────────────────────────────────── */}
       <div>

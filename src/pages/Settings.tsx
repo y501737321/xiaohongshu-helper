@@ -1,40 +1,72 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { KeyboardEvent } from 'react'
-import { X, Save, RefreshCw, CheckCircle, XCircle, Clock, FileText, ToggleLeft, ToggleRight, FolderOpen, LogIn, Plus } from 'lucide-react'
+import { X, Save, Clock, FileText, FolderOpen, Plus, RefreshCw } from 'lucide-react'
 import type { AppConfig } from '../types/electron'
 
-// ─── 关键词预设组 ──────────────────────────────────────────
+// ─── 关键词预设组 ────────────────────────────────────────
 const KEYWORD_PRESETS = [
   {
-    label: '精准获客（推荐）',
-    words: ['求推荐私教', '想找私人教练', '求靠谱健身教练', '哪里有好的私教', '想减肥求教练', '产后恢复教练推荐'],
-  },
-  {
-    label: '泛流量',
-    words: ['寻找私教', '私教推荐', '体态矫正', '减肥健身', '增肌塑形'],
+    label: '默认推荐',
+    words: [
+      '求靠谱健身教练', '想减肥', '求推荐私教', '想找私人教练',
+      '哪里有好的私教', '私教推荐', '找个教练带我练', '有没有靠谱的健身教练',
+      '产后恢复教练推荐', '体态矫正哪里好', '想减肥不知道怎么开始',
+      '健身小白求带', '想增肌求指导', '骨盆修复推荐',
+      '想瘦腿求方法', '圆肩驼背怎么矫正',
+    ],
   },
 ]
 
+// ─── 中国主要城市 ──────────────────────────────────────────
+const CHINA_CITIES = [
+  '北京', '上海', '广州', '深圳', '天津', '重庆',
+  '杭州', '南京', '苏州', '成都', '武汉', '西安',
+  '长沙', '郑州', '青岛', '大连', '宁波', '厦门',
+  '福州', '合肥', '济南', '昆明', '沈阳', '哈尔滨',
+  '佛山', '东莞', '无锡', '石家庄', '南昌', '贵阳',
+]
+
 const DEFAULT_AD_WORDS = ['接广告', '商务合作', '课程售价', '原价', '限时优惠', '私信领取', '代理加盟', '学员招募', '训练营报名', '品牌方']
-const DEFAULT_COMMENT_WORDS = ['求推荐', '想找私教', '有私教推荐吗', '同城', '怎么收费', '多少钱', '在哪里', '能约课吗', '求教练', '有好的教练吗']
+
+const PUBLISH_TIME_OPTIONS = [
+  { value: 1, label: '一天内', intervalMinutes: 1440, hint: '默认推荐，和每天一次的运行频率保持一致' },
+  { value: 7, label: '一周内', intervalMinutes: 10080, hint: '扩大搜索范围，覆盖最近仍可能转化的笔记' },
+  { value: 180, label: '半年内', intervalMinutes: 43200, hint: '低频补漏，结果更多、单轮更慢' },
+]
+
+const RUN_INTERVAL_OPTIONS = [
+  { value: 1440, label: '每天一次', hint: '适合搜索范围：一天内' },
+  { value: 10080, label: '每周一次', hint: '适合搜索范围：一周内' },
+  { value: 43200, label: '每月一次', hint: '适合搜索范围：半年内补漏' },
+]
 
 const DEFAULT_CONFIG: AppConfig = {
-  keywords: ['求推荐私教', '想找私人教练', '求靠谱健身教练', '私教推荐', '产后恢复教练推荐'],
+  configVersion: 3,
+  keywords: [
+    '求靠谱健身教练', '想减肥', '求推荐私教', '想找私人教练',
+    '哪里有好的私教', '私教推荐', '找个教练带我练', '有没有靠谱的健身教练',
+    '产后恢复教练推荐', '体态矫正哪里好', '想减肥不知道怎么开始',
+    '健身小白求带', '想增肌求指导', '骨盆修复推荐',
+    '想瘦腿求方法', '圆肩驼背怎么矫正',
+  ],
   intervalMinutes: 1440,
   llmApiKey: '',
   llmBaseUrl: 'https://api.deepseek.com',
   llmModel: 'deepseek-v4-flash',
   leadsDir: '',
   nightModeStart: 0,
-  nightModeEnd: 7,
+  nightModeEnd: 0,
   mockMode: false,
   targetCity: '天津',
   maxDaysAgo: 1,
+  searchEngine: 'skill',
+  searchLimitPerKeyword: 120,
+  skillSearchScrolls: 20,
+  maxResultsPerKeyword: 0,
+  maxDetailsPerRun: 0,
+  titleScoreThreshold: -999,
   adFilterWords: [...DEFAULT_AD_WORDS],
-  commentIntentWords: [...DEFAULT_COMMENT_WORDS],
 }
-
-type LoginStatus = 'unknown' | 'checking' | 'ok' | 'fail'
 
 // ─── 通用 Tag 输入组件 ──────────────────────────────────────
 function TagInput({ items, onChange, inputId, placeholder }: {
@@ -82,20 +114,11 @@ function TagInput({ items, onChange, inputId, placeholder }: {
 export default function Settings() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG)
   const [saved, setSaved] = useState(false)
-  const [xhsStatus, setXhsStatus] = useState<LoginStatus>('unknown')
   const isElectron = typeof window !== 'undefined' && !!window.electron
 
   useEffect(() => {
     if (!isElectron) return
     window.electron.getConfig().then(setConfig)
-    window.electron.onLog((entry) => {
-      if (entry.message.includes('小红书登录正常') || entry.message.includes('登录成功')) {
-        setXhsStatus('ok')
-      } else if (entry.message.includes('小红书未登录') || entry.message.includes('登录失败')) {
-        setXhsStatus('fail')
-      }
-    })
-    return () => window.electron.removeAllListeners('log')
   }, [isElectron])
 
   const handleSave = useCallback(async () => {
@@ -105,45 +128,17 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 2000)
   }, [config, isElectron])
 
-  const checkXhs = async () => {
-    if (!isElectron) return
-    setXhsStatus('checking')
-    await window.electron.checkXhsLogin()
-    setTimeout(() => setXhsStatus((s) => s === 'checking' ? 'unknown' : s), 10000)
-  }
-
-  const handleXhsLogin = async () => {
-    if (!isElectron) return
-    await window.electron.xhsLogin()
-  }
-
   const handleSelectLeadsDir = async () => {
     if (!isElectron) return
     const result = await window.electron.selectLeadsDir()
     if (result.path) setConfig((p) => ({ ...p, leadsDir: result.path }))
   }
 
-  // 批量添加关键词预设（跳过已存在的）
-  const addPresetKeywords = (words: string[]) => {
-    setConfig((p) => {
-      const existing = new Set(p.keywords)
-      const newWords = words.filter(w => !existing.has(w))
-      return { ...p, keywords: [...p.keywords, ...newWords] }
-    })
-  }
-
-  const StatusIcon = ({ status }: { status: LoginStatus }) => {
-    if (status === 'checking') return <RefreshCw size={14} className="spin" style={{ color: 'var(--warning)' }} />
-    if (status === 'ok') return <CheckCircle size={14} style={{ color: 'var(--success)' }} />
-    if (status === 'fail') return <XCircle size={14} style={{ color: 'var(--error)' }} />
-    return null
-  }
-
-  const statusBadge = (status: LoginStatus) => {
-    if (status === 'ok')       return <span className="badge badge-success">已登录</span>
-    if (status === 'fail')     return <span className="badge badge-error">未登录</span>
-    if (status === 'checking') return <span className="badge badge-warning">检测中...</span>
-    return <span className="badge badge-unknown">未检测</span>
+  const handleResetDedupe = async () => {
+    if (!isElectron) return
+    const ok = window.confirm('重置去重记录后，下轮可能重新处理已经看过的笔记或作者。已保存的线索文件不会被删除。确定继续吗？')
+    if (!ok) return
+    await window.electron.resetDedupe()
   }
 
   const set = (field: keyof AppConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -155,15 +150,6 @@ export default function Settings() {
       {/* ── 顶部操作栏 ─────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            id="mock-mode-btn"
-            className="btn-secondary"
-            onClick={() => setConfig((p) => ({ ...p, mockMode: !p.mockMode }))}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, color: config.mockMode ? 'var(--warning)' : 'var(--text-muted)' }}
-          >
-            {config.mockMode ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-            {config.mockMode ? '模拟模式 (开)' : '模拟模式 (关)'}
-          </button>
           <button
             id="open-log-btn"
             className="btn-secondary"
@@ -185,69 +171,34 @@ export default function Settings() {
         </button>
       </div>
 
-      {/* ── 小红书账号 ─────────────────────────────────────── */}
-      <div className="settings-section">
-        <div className="settings-section-title">小红书账号</div>
-        <div className="login-card">
-          <div className="login-info">
-            <div className="login-icon xhs-icon-bg">🌸</div>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>小红书</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                点击「扫码登录」，在弹出窗口中用小红书 App 扫码
-              </div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <StatusIcon status={xhsStatus} />
-            {statusBadge(xhsStatus)}
-            <button id="check-xhs-btn" className="btn-secondary" onClick={checkXhs} disabled={xhsStatus === 'checking'}>检查状态</button>
-            <button
-              id="xhs-login-btn"
-              className="btn-control btn-start"
-              onClick={handleXhsLogin}
-              style={{ padding: '6px 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              <LogIn size={14} />
-              扫码登录
-            </button>
-          </div>
-        </div>
-        {xhsStatus === 'fail' && (
-          <div style={{ marginTop: 8, padding: '10px 14px', background: 'rgba(255, 69, 58, 0.08)', border: '1px solid rgba(255, 69, 58, 0.2)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--error)', lineHeight: 1.6 }}>
-            未检测到登录状态，请点击上方「扫码登录」按钮完成登录。
-          </div>
-        )}
-      </div>
-
-      {/* ── 监控关键词 ────────────────────────────────────────── */}
+      {/* ── 监控关键词 ──────────────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-title">监控关键词</div>
-
-        {/* 预设词组按钮 */}
-        <div className="form-group">
-          <label className="form-label">快捷预设（点击批量添加）</label>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {KEYWORD_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                className="btn-secondary"
-                onClick={() => addPresetKeywords(preset.words)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12 }}
-              >
-                <Plus size={12} />
-                {preset.label}
-              </button>
-            ))}
-          </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+          每轮按下方关键词进行真实搜索；设置目标城市后会自动拼接城市名，并在本地按发布时间和意向过滤。
         </div>
 
         <div className="form-group">
-          <label className="form-label">当前关键词（按 Enter 或逗号添加自定义词）</label>
+          <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--success)' }}>关键词池</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {KEYWORD_PRESETS.map((preset) => (
+                <button key={preset.label} className="btn-secondary"
+                  onClick={() => {
+                    const existing = new Set(config.keywords || [])
+                    const newWords = preset.words.filter(w => !existing.has(w))
+                    setConfig((p) => ({ ...p, keywords: [...(p.keywords || []), ...newWords] }))
+                  }}
+                  style={{ padding: '3px 8px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <Plus size={10} />填入{preset.label}
+                </button>
+              ))}
+            </div>
+          </label>
           <TagInput
             items={config.keywords}
             onChange={(keywords) => setConfig((p) => ({ ...p, keywords }))}
-            inputId="tag-input"
+            inputId="tag-keywords"
             placeholder="输入关键词..."
           />
         </div>
@@ -281,34 +232,6 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* ── 评论意向词 ────────────────────────────────────────── */}
-      <div className="settings-section">
-        <div className="settings-section-title">评论区客户挖掘</div>
-        <div className="form-group">
-          <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>评论中包含以下词的用户将被记录为潜在客户（零 AI 开销）</span>
-            <button
-              className="btn-secondary"
-              onClick={() => {
-                const existing = new Set(config.commentIntentWords || [])
-                const newWords = DEFAULT_COMMENT_WORDS.filter(w => !existing.has(w))
-                setConfig((p) => ({ ...p, commentIntentWords: [...(p.commentIntentWords || []), ...newWords] }))
-              }}
-              style={{ padding: '3px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
-            >
-              <Plus size={10} />
-              填入预设
-            </button>
-          </label>
-          <TagInput
-            items={config.commentIntentWords || []}
-            onChange={(commentIntentWords) => setConfig((p) => ({ ...p, commentIntentWords }))}
-            inputId="comment-intent-input"
-            placeholder="输入意向词..."
-          />
-        </div>
-      </div>
-
       {/* ── 线索保存位置 ──────────────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-title">线索保存位置</div>
@@ -327,33 +250,67 @@ export default function Settings() {
       {/* ── 系统参数 ──────────────────────────────────────────── */}
       <div className="settings-section">
         <div className="settings-section-title">系统参数</div>
-        <div className="form-group">
-          <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Clock size={13} />
-            轮询间隔：<strong style={{ color: 'var(--text-primary)' }}>{config.intervalMinutes} 分钟</strong>
-          </label>
-          <input id="interval-slider" type="range" min={5} max={1440} step={5} value={config.intervalMinutes}
-            onChange={(e) => setConfig((p) => ({ ...p, intervalMinutes: Number(e.target.value) }))} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            <span>5 分钟</span><span>1440 分钟(每天一次)</span>
-          </div>
-        </div>
-
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
           <div className="form-group">
-            <label className="form-label">收集日期范围 (天内)</label>
-            <input id="max-days-ago" type="number" className="form-input" min={1} max={30}
-              value={config.maxDaysAgo} onChange={(e) => setConfig((p) => ({ ...p, maxDaysAgo: Number(e.target.value) }))} />
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>1表示只收集当天内容</div>
+            <label className="form-label">搜索范围</label>
+            <select id="max-days-ago" className="form-input"
+              value={PUBLISH_TIME_OPTIONS.some((item) => item.value === config.maxDaysAgo) ? config.maxDaysAgo : 1}
+              onChange={(e) => {
+                const maxDaysAgo = Number(e.target.value)
+                const option = PUBLISH_TIME_OPTIONS.find((item) => item.value === maxDaysAgo)
+                setConfig((p) => ({
+                  ...p,
+                  maxDaysAgo,
+                  intervalMinutes: option?.intervalMinutes ?? p.intervalMinutes,
+                }))
+              }}>
+              {PUBLISH_TIME_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              {PUBLISH_TIME_OPTIONS.find((item) => item.value === config.maxDaysAgo)?.hint || '按平台支持的搜索范围筛选，再本地复核'}
+            </div>
           </div>
           <div className="form-group">
-            <label className="form-label">目标城市（IP属地参考，不硬过滤）</label>
-            <input id="target-city" type="text" className="form-input"
-              value={config.targetCity} onChange={set('targetCity')} placeholder="例如: 天津" />
+            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Clock size={13} />
+              运行频率
+            </label>
+            <select id="interval-select" className="form-input"
+              value={RUN_INTERVAL_OPTIONS.some((item) => item.value === config.intervalMinutes) ? config.intervalMinutes : 1440}
+              onChange={(e) => setConfig((p) => ({ ...p, intervalMinutes: Number(e.target.value) }))}>
+              {RUN_INTERVAL_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              {RUN_INTERVAL_OPTIONS.find((item) => item.value === config.intervalMinutes)?.hint || '按搜索范围选择运行节奏'}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 16 }}>
+          <div className="form-group">
+            <label className="form-label">目标城市（搜索自动拼接 + IP属地参考）</label>
+            <select id="target-city" className="form-input"
+              value={CHINA_CITIES.includes(config.targetCity) ? config.targetCity : '__custom__'}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setConfig((p) => ({ ...p, targetCity: '' }))
+                } else {
+                  setConfig((p) => ({ ...p, targetCity: e.target.value }))
+                }
+              }}
+            >
+              {CHINA_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="__custom__">自定义...</option>
+            </select>
+            {!CHINA_CITIES.includes(config.targetCity) && (
+              <input type="text" className="form-input" style={{ marginTop: 8 }}
+                value={config.targetCity} onChange={set('targetCity')} placeholder="输入城市名..." />
+            )}
+          </div>
           <div className="form-group">
             <label className="form-label">夜间暂停开始 (时)</label>
             <input id="night-start" type="number" className="form-input" min={0} max={23}
@@ -366,6 +323,85 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {/* ── 高级过滤设置 ────────────────────────────────────────── */}
+      <details className="settings-section">
+        <summary className="settings-section-title" style={{ cursor: 'pointer', userSelect: 'none' }}>
+          高级过滤设置（点击展开）
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+            默认尽可能多抓取真实结果；0 表示不在该阶段截断，所有被基础过滤通过的笔记都会继续进入下一步。
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <div className="form-group">
+              <label className="form-label">搜索后端</label>
+              <select
+                className="form-input"
+                value={config.searchEngine || 'skill'}
+                onChange={(e) => setConfig((p) => ({ ...p, searchEngine: e.target.value as 'skill' | 'mcp' }))}
+              >
+                <option value="skill">Skill 滚动搜索（推荐）</option>
+                <option value="mcp">MCP 首页搜索</option>
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Skill 会滚动加载更多结果；MCP 仅用于兜底</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">每关键词搜索上限</label>
+              <input type="number" className="form-input" min={20} max={500}
+                value={config.searchLimitPerKeyword ?? 120}
+                onChange={(e) => setConfig((p) => ({ ...p, searchLimitPerKeyword: Number(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>默认120；越高越全，但单轮更慢</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">搜索滚动次数</label>
+              <input type="number" className="form-input" min={3} max={60}
+                value={config.skillSearchScrolls ?? 20}
+                onChange={(e) => setConfig((p) => ({ ...p, skillSearchScrolls: Number(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>连续无新增会提前停止</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <div className="form-group">
+              <label className="form-label">每关键词预筛上限</label>
+              <input type="number" className="form-input" min={0} max={500}
+                value={config.maxResultsPerKeyword ?? 0}
+                onChange={(e) => setConfig((p) => ({ ...p, maxResultsPerKeyword: Number(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>0=不限制；不再默认只取前几条</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">本轮详情抓取上限</label>
+              <input type="number" className="form-input" min={0} max={1000}
+                value={config.maxDetailsPerRun ?? 0}
+                onChange={(e) => setConfig((p) => ({ ...p, maxDetailsPerRun: Number(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>0=候选全量进详情；最完整但耗时更长</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <div className="form-group">
+              <label className="form-label">标题预筛阈值</label>
+              <input type="number" className="form-input" min={-999} max={10}
+                value={config.titleScoreThreshold ?? -999}
+                onChange={(e) => setConfig((p) => ({ ...p, titleScoreThreshold: Number(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>默认-999，不因标题弱而丢弃；越高越严格</div>
+            </div>
+          </div>
+          <div className="form-group" style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border-color)' }}>
+            <label className="form-label">危险操作</label>
+            <button
+              className="btn-secondary"
+              onClick={handleResetDedupe}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warning)' }}
+            >
+              <RefreshCw size={14} />
+              重置去重记录
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.6 }}>
+              清空已处理过的笔记和作者缓存；不会删除 CSV 或统计文档，但下轮可能重新扫描旧内容。
+            </div>
+          </div>
+        </div>
+      </details>
 
       {/* ── LLM 配置 ──────────────────────────────────────────── */}
       <div className="settings-section">

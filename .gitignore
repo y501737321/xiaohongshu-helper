@@ -28,3 +28,11 @@ resources/bin/
 release/
 cookies.json
 test-login.js
+
+# Local runtime/test data
+.local-data/
+.playwright-mcp/
+temp_skill/
+
+# Local UI/debug screenshots
+*.png

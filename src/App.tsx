@@ -1,13 +1,30 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { LayoutDashboard, Settings as SettingsIcon, Flower2, Zap } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
+import type { LogEntry } from './types/electron'
 import './index.css'
 
 type Page = 'dashboard' | 'settings'
 
 export default function App() {
   const [activePage, setActivePage] = useState<Page>('dashboard')
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const isElectron = typeof window !== 'undefined' && !!window.electron
+  const listenerRef = useRef(false)
+
+  // 在 App 层注册 log 监听，只注册一次，切换页面不丢失
+  useEffect(() => {
+    if (!isElectron || listenerRef.current) return
+    listenerRef.current = true
+    window.electron.onLog((entry) => {
+      setLogs((prev) => [...prev.slice(-200), entry])
+    })
+    return () => {
+      window.electron.removeAllListeners('log')
+      listenerRef.current = false
+    }
+  }, [isElectron])
 
   const navItems = [
     { id: 'dashboard' as Page, label: '主控台', icon: LayoutDashboard },
@@ -57,7 +74,7 @@ export default function App() {
             Phase 1&2 · 框架与 UI
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            v1.0.0
+            v1.1.0
           </div>
         </div>
       </aside>
@@ -72,7 +89,7 @@ export default function App() {
 
         {/* 页面内容 */}
         <div className="page-body">
-          {activePage === 'dashboard' && <Dashboard />}
+          {activePage === 'dashboard' && <Dashboard logs={logs} />}
           {activePage === 'settings' && <Settings />}
         </div>
       </main>
