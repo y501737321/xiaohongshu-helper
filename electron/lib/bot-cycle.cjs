@@ -1,5 +1,4 @@
 const { mcpPost } = require('./mcp-client.cjs')
-const { skillSearch, skillDetail, isSkillAvailable } = require('./skill-client.cjs')
 const { incrementDailyStat } = require('./config.cjs')
 const {
   cleanNoteId,
@@ -108,25 +107,6 @@ async function searchXiaohongshu(keyword, sendLog, strategyFilters = {}) {
     return []
   }
 
-  const wantsSkill = (config.searchEngine || 'skill') !== 'mcp'
-  if (wantsSkill && isSkillAvailable()) {
-    try {
-      const limit = Number(config.searchLimitPerKeyword || 120)
-      const maxScrolls = Number(config.skillSearchScrolls || 20)
-      const timeoutMs = Number(config.searchTimeoutMs || 35000) + Math.max(20000, maxScrolls * 5000)
-      const publishTime = getPublishTimeOption(config.maxDaysAgo)
-      const rows = await skillSearch(keyword, {
-        limit,
-        maxScrolls,
-        timeoutMs,
-        filters: { publish_time: publishTime.filter },
-      })
-      return rows.map((item) => normalizeSearchItem({ ...item, _source: 'skill' }, keyword)).filter(Boolean)
-    } catch (err) {
-      sendLog(`⚠️ Skill 搜索失败，改用 MCP 兜底: ${err.message}`, 'warn')
-    }
-  }
-
   try {
     const searchTimeoutMs = Number(config.searchTimeoutMs || 35000)
     const searchRetries = Number(config.searchRetries ?? 0)
@@ -198,21 +178,6 @@ async function getNoteDetail(noteId, xsecToken, sendLog, note = null) {
   if (note?._mockDetail) return note._mockDetail
 
   const config = require('./config.cjs').loadConfig()
-  if ((note?._source === 'skill' || (config.searchEngine || 'skill') === 'skill') && isSkillAvailable()) {
-    try {
-      const detailTimeoutMs = Number(config.detailTimeoutMs || 45000) + 20000
-      const data = await skillDetail(cleanNoteId(noteId), xsecToken, { timeoutMs: detailTimeoutMs })
-      const noteData = data?.note || data?.data?.note || data || {}
-      return {
-        content: noteData.desc || noteData.content || note?.desc || '',
-        ipLocation: noteData.ipLocation || noteData.ip_location || '',
-        time: normalizeTimestamp(noteData.time || noteData.lastUpdateTime || note?._noteTime || 0),
-      }
-    } catch (err) {
-      sendLog(`⚠️ Skill 详情失败，改用 MCP 兜底 (${noteId}): ${err.message}`, 'warn')
-    }
-  }
-
   try {
     const detailTimeoutMs = Number(config.detailTimeoutMs || 45000)
     const detailRetries = Number(config.detailRetries ?? 1)
@@ -390,8 +355,7 @@ async function runBotCycle(config, { isRunning, stats, sendStats, sendLog, seenN
 
     filtered.forEach((note) => candidates.push(note))
     recordKeywordSearch(keyword, filtered.length)
-    const engineLabel = notes.some((note) => note._source === 'skill') ? 'Skill滚动' : 'MCP首页'
-    sendLog(`📋 "${searchKeyword}" ${engineLabel}返回 ${notes.length} 条，预筛候选 ${filtered.length} 条`, filtered.length > 0 ? 'success' : 'info')
+    sendLog(`📋 "${searchKeyword}" 内置服务返回 ${notes.length} 条，预筛候选 ${filtered.length} 条`, filtered.length > 0 ? 'success' : 'info')
 
     if (i < searchJobs.length - 1 && !config.mockMode) {
       await randomDelay(Number(config.searchDelayMinMs || 12000), Number(config.searchDelayMaxMs || 22000))

@@ -59,9 +59,8 @@ const DEFAULT_CONFIG: AppConfig = {
   mockMode: false,
   targetCity: '天津',
   maxDaysAgo: 1,
-  searchEngine: 'skill',
+  searchEngine: 'mcp',
   searchLimitPerKeyword: 120,
-  skillSearchScrolls: 20,
   maxResultsPerKeyword: 0,
   maxDetailsPerRun: 0,
   titleScoreThreshold: -999,
@@ -333,18 +332,11 @@ export default function Settings() {
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
             默认尽可能多抓取真实结果；0 表示不在该阶段截断，所有被基础过滤通过的笔记都会继续进入下一步。
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
             <div className="form-group">
               <label className="form-label">搜索后端</label>
-              <select
-                className="form-input"
-                value={config.searchEngine || 'skill'}
-                onChange={(e) => setConfig((p) => ({ ...p, searchEngine: e.target.value as 'skill' | 'mcp' }))}
-              >
-                <option value="skill">Skill 滚动搜索（推荐）</option>
-                <option value="mcp">MCP 首页搜索</option>
-              </select>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Skill 会滚动加载更多结果；MCP 仅用于兜底</div>
+              <input className="form-input" value="内置 MCP 服务" readOnly />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>当前安装包只使用内置服务，无需安装额外 Python 组件</div>
             </div>
             <div className="form-group">
               <label className="form-label">每关键词搜索上限</label>
@@ -352,13 +344,6 @@ export default function Settings() {
                 value={config.searchLimitPerKeyword ?? 120}
                 onChange={(e) => setConfig((p) => ({ ...p, searchLimitPerKeyword: Number(e.target.value) }))} />
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>默认120；越高越全，但单轮更慢</div>
-            </div>
-            <div className="form-group">
-              <label className="form-label">搜索滚动次数</label>
-              <input type="number" className="form-input" min={3} max={60}
-                value={config.skillSearchScrolls ?? 20}
-                onChange={(e) => setConfig((p) => ({ ...p, skillSearchScrolls: Number(e.target.value) }))} />
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>连续无新增会提前停止</div>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>

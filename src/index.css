@@ -441,6 +441,18 @@ html, body, #root {
   color: var(--text-muted);
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.toggle-row input {
+  accent-color: var(--accent-primary);
+}
+
 /* ─── Tag Input ────────────────────────────────────────── */
 .tag-container {
   display: flex;
@@ -625,7 +637,9 @@ input[type="range"]::-webkit-slider-thumb {
 .xhs-login-subtitle {
   color: var(--text-muted);
   font-size: 11px;
+  line-height: 1.45;
   margin-top: 2px;
+  word-break: break-word;
 }
 
 .xhs-qr-box {

@@ -28,10 +28,10 @@ export default function EnvBanner() {
     await window.electron.checkEnv()
   }
 
-  const handleInstallXhs = async () => {
+  const handleRestartService = async () => {
     if (!isElectron) return
     setInstalling(true)
-    await window.electron.installXhsSkills()
+    await window.electron.restartMcpService()
     // 重新检测
     setTimeout(() => runCheck(), 3000)
   }
@@ -54,7 +54,7 @@ export default function EnvBanner() {
             : <CheckCircle size={14} style={{ color: 'var(--success)' }} />
           }
           <span style={{ color: hasIssue ? 'var(--warning)' : 'var(--success)', fontWeight: 500 }}>
-            {hasIssue ? '检测到环境缺失，部分功能需手动配置' : '运行环境正常'}
+            {hasIssue ? '内置服务未就绪，登录和抓取暂不可用' : '运行环境正常'}
           </span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -83,13 +83,13 @@ export default function EnvBanner() {
               {!r.ok && r.name === 'MCP 服务' && (
                 <button
                   className="btn-secondary"
-                  onClick={handleInstallXhs}
+                  onClick={handleRestartService}
                   disabled={installing}
                   style={{ padding: '2px 10px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}
                 >
                   {installing
                     ? <><RefreshCw size={10} className="spin" /> 启动中...</>
-                    : <><RefreshCw size={10} /> 重启服务</>
+                    : <><RefreshCw size={10} /> 重新启动</>
                   }
                 </button>
               )}

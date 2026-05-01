@@ -41,9 +41,8 @@ const DEFAULT_CONFIG = {
   adFilterWords: ['接广告', '商务合作', '课程售价', '原价', '限时优惠', '私信领取', '代理加盟', '学员招募', '训练营报名', '品牌方'],
   // 0 表示不在预筛阶段截断，尽可能保留所有通过基础过滤的结果。
   maxResultsPerKeyword: 0,
-  searchEngine: 'skill',
+  searchEngine: 'mcp',
   searchLimitPerKeyword: 120,
-  skillSearchScrolls: 20,
   // 0 表示本轮候选全量进入详情抓取。
   maxDetailsPerRun: 0,
   searchTimeoutMs: 35000,
@@ -112,6 +111,9 @@ function normalizeConfig(config, rawConfig = config) {
   delete normalized.twoStageLLM
   delete normalized.triageBatchSize
   delete normalized.deepEvalBatchSize
+  delete normalized['skill' + 'SearchScrolls']
+  delete normalized['allow' + 'ManualVerification']
+  delete normalized['manual' + 'VerifyTimeoutMs']
   return normalized
 }
 
@@ -122,12 +124,12 @@ function migrateSearchDefaults(normalized, rawConfig) {
 }
 
 function normalizeRuntimeOptions(config) {
-  config.searchEngine = config.searchEngine === 'mcp' ? 'mcp' : 'skill'
+  // 当前可交付版本只内置 MCP 服务；不要让旧配置继续指向未打包的搜索后端。
+  config.searchEngine = 'mcp'
   config.intervalMinutes = normalizeIntervalMinutes(config.intervalMinutes)
   config.nightModeStart = clampInt(config.nightModeStart, 0, 23, DEFAULT_CONFIG.nightModeStart)
   config.nightModeEnd = clampInt(config.nightModeEnd, 0, 23, DEFAULT_CONFIG.nightModeEnd)
   config.searchLimitPerKeyword = clampInt(config.searchLimitPerKeyword, 20, 500, DEFAULT_CONFIG.searchLimitPerKeyword)
-  config.skillSearchScrolls = clampInt(config.skillSearchScrolls, 3, 60, DEFAULT_CONFIG.skillSearchScrolls)
   config.maxResultsPerKeyword = clampInt(config.maxResultsPerKeyword, 0, 500, DEFAULT_CONFIG.maxResultsPerKeyword)
   config.maxDetailsPerRun = clampInt(config.maxDetailsPerRun, 0, 1000, DEFAULT_CONFIG.maxDetailsPerRun)
   config.titleScoreThreshold = clampInt(config.titleScoreThreshold, -999, 10, DEFAULT_CONFIG.titleScoreThreshold)
@@ -166,9 +168,6 @@ function migrateCoverageDefaults(normalized, rawConfig) {
     }
     if (normalized.searchLimitPerKeyword === undefined || Number(normalized.searchLimitPerKeyword) <= 50) {
       normalized.searchLimitPerKeyword = DEFAULT_CONFIG.searchLimitPerKeyword
-    }
-    if (normalized.skillSearchScrolls === undefined || Number(normalized.skillSearchScrolls) <= 8) {
-      normalized.skillSearchScrolls = DEFAULT_CONFIG.skillSearchScrolls
     }
     if (normalized.titleScoreThreshold === undefined || Number(normalized.titleScoreThreshold) >= -2) {
       normalized.titleScoreThreshold = DEFAULT_CONFIG.titleScoreThreshold

@@ -32,9 +32,8 @@ export interface AppConfig {
   maxDaysAgo: number
   adFilterWords: string[]
   // 过滤与评估参数
-  searchEngine?: 'skill' | 'mcp'
+  searchEngine?: 'mcp'
   searchLimitPerKeyword?: number
-  skillSearchScrolls?: number
   titleScoreThreshold?: number
   maxResultsPerKeyword?: number
   maxDetailsPerRun?: number
@@ -96,7 +95,7 @@ export interface ElectronAPI {
   getXhsLoginState:  () => Promise<XhsLoginState>
   getXhsQrCode:      () => Promise<XhsLoginState>
   xhsLogin:          () => Promise<{ ok: boolean }>
-  installXhsSkills:  () => Promise<{ ok: boolean }>
+  restartMcpService: () => Promise<{ ok: boolean }>
   selectLeadsDir:    () => Promise<{ path: string }>
   openLogFile:       () => Promise<{ ok: boolean }>
   openLeadsFolder:   () => Promise<{ ok: boolean }>

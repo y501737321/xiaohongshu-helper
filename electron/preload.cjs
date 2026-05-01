@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('electron', {
   getXhsLoginState:  () => ipcRenderer.invoke('get-xhs-login-state'),
   getXhsQrCode:      () => ipcRenderer.invoke('get-xhs-qrcode'),
   xhsLogin:          () => ipcRenderer.invoke('xhs-login'),
-  installXhsSkills:  () => ipcRenderer.invoke('install-xhs-skills'),
+  restartMcpService: () => ipcRenderer.invoke('restart-mcp-service'),
   selectLeadsDir:    () => ipcRenderer.invoke('select-leads-dir'),
   openLogFile:       () => ipcRenderer.invoke('open-log-file'),
   openLeadsFolder:   () => ipcRenderer.invoke('open-leads-folder'),

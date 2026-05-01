@@ -9,23 +9,24 @@
   "files": [
     "dist/**/*",
     "electron/**/*",
+    "!electron/lib/skill-client.cjs",
     "node_modules/**/*",
     "!node_modules/electron/**",
     "!node_modules/electron-builder/**",
     "!**/*.map"
-  ],
-  "extraResources": [
-    {
-      "from": "resources/bin",
-      "to": "bin",
-      "filter": ["**/*"]
-    }
   ],
   "mac": {
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist",
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": ["xiaohongshu-mcp-darwin-*"]
+      }
+    ],
     "target": [
       { "target": "dmg", "arch": ["arm64", "x64"] },
       { "target": "zip", "arch": ["arm64", "x64"] }
@@ -39,6 +40,13 @@
     ]
   },
   "win": {
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": ["xhs-helper-service.exe"]
+      }
+    ],
     "target": [
       { "target": "nsis", "arch": ["x64"] }
     ]

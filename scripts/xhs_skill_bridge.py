@@ -8,6 +8,21 @@ import sys
 import time
 from typing import Any, Dict, List
 
+RISK_TEXT_MARKERS = (
+    "安全验证",
+    "风险验证",
+    "风险检测",
+    "请完成验证",
+    "拖动滑块",
+    "滑块验证",
+    "验证码",
+    "访问异常",
+    "操作频繁",
+    "人机验证",
+    "环境异常",
+    "账号异常",
+)
+
 
 def _load_skill(skill_dir: str):
     if not os.path.isdir(skill_dir):
@@ -30,6 +45,39 @@ def _dedupe(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen.add(note_id)
         out.append(item)
     return out
+
+
+def _looks_like_verification(page) -> bool:
+    try:
+        url = (page.url or "").lower()
+        if "captcha" in url or "verify" in url:
+            return True
+    except Exception:
+        pass
+
+    try:
+        text = page.locator("body").inner_text(timeout=2000)[:5000]
+        return any(marker in text for marker in RISK_TEXT_MARKERS)
+    except Exception:
+        return False
+
+
+def _handle_manual_verification(page, headless: bool, timeout_s: int) -> bool:
+    if not _looks_like_verification(page):
+        return False
+    if headless:
+        raise RuntimeError("NEEDS_MANUAL_VERIFICATION")
+
+    deadline = time.time() + max(30, timeout_s)
+    while time.time() < deadline:
+        time.sleep(2)
+        if not _looks_like_verification(page):
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=3000)
+            except Exception:
+                pass
+            return True
+    raise RuntimeError("MANUAL_VERIFICATION_TIMEOUT")
 
 
 def _extract_state(page, limit: int) -> List[Dict[str, Any]]:
@@ -104,11 +152,19 @@ def _extract_dom(page, limit: int) -> List[Dict[str, Any]]:
     return json.loads(result) if result else []
 
 
-def search_with_scroll(action, keyword: str, limit: int, max_scrolls: int) -> List[Dict[str, Any]]:
+def search_with_scroll(action, keyword: str, limit: int, max_scrolls: int, headless: bool, manual_timeout_s: int) -> List[Dict[str, Any]]:
     page = action.client.page
     action.client.navigate(action._make_search_url(keyword))
-    action._dismiss_login_popup()
-    action.client.wait_for_initial_state()
+    _handle_manual_verification(page, headless, manual_timeout_s)
+    try:
+        action._dismiss_login_popup()
+        action.client.wait_for_initial_state()
+    except Exception:
+        if _handle_manual_verification(page, headless, manual_timeout_s):
+            action._dismiss_login_popup()
+            action.client.wait_for_initial_state()
+        else:
+            raise
     time.sleep(1.2)
 
     filters = getattr(action, "_bridge_filters", {})
@@ -120,12 +176,14 @@ def search_with_scroll(action, keyword: str, limit: int, max_scrolls: int) -> Li
             search_scope=filters.get("search_scope"),
             location=filters.get("location"),
         )
+        _handle_manual_verification(page, headless, manual_timeout_s)
         time.sleep(1.5)
 
     results: List[Dict[str, Any]] = []
     last_count = 0
     stagnant = 0
     for _ in range(max_scrolls + 1):
+        _handle_manual_verification(page, headless, manual_timeout_s)
         results = _dedupe(_extract_state(page, limit) + _extract_dom(page, limit))
         if len(results) >= limit:
             break
@@ -153,7 +211,10 @@ def main() -> int:
     parser.add_argument("--cookie-path", required=True)
     parser.add_argument("--user-data-dir", required=True)
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--headless", choices=("0", "1"), default="1")
+    parser.add_argument("--manual-verify-timeout", type=int, default=180)
     args = parser.parse_args()
+    headless = args.headless != "0"
 
     payload = json.loads(sys.stdin.read() or "{}")
     action_name = payload.get("action")
@@ -163,7 +224,7 @@ def main() -> int:
     os.makedirs(args.user_data_dir, exist_ok=True)
 
     with XiaohongshuClient(
-        headless=True,
+        headless=headless,
         cookie_path=args.cookie_path,
         user_data_dir=args.user_data_dir,
         timeout=args.timeout,
@@ -182,6 +243,8 @@ def main() -> int:
                 str(payload.get("keyword") or ""),
                 max(1, int(payload.get("limit") or 50)),
                 max(1, int(payload.get("maxScrolls") or 8)),
+                headless,
+                args.manual_verify_timeout,
             )
             print(json.dumps({"ok": True, "count": len(rows), "results": rows}, ensure_ascii=False))
             return 0
@@ -189,12 +252,31 @@ def main() -> int:
         if action_name == "detail":
             if not check_logged_in(LoginAction, client):
                 raise RuntimeError("NOT_LOGGED_IN")
-            detail = FeedDetailAction(client).get_feed_detail(
-                str(payload.get("feedId") or ""),
-                str(payload.get("xsecToken") or ""),
-                load_comments=False,
-                xsec_source=str(payload.get("xsecSource") or "pc_search"),
-            )
+            action = FeedDetailAction(client)
+            try:
+                detail = action.get_feed_detail(
+                    str(payload.get("feedId") or ""),
+                    str(payload.get("xsecToken") or ""),
+                    load_comments=False,
+                    xsec_source=str(payload.get("xsecSource") or "pc_search"),
+                )
+            except Exception:
+                if _handle_manual_verification(client.page, headless, args.manual_verify_timeout):
+                    detail = action.get_feed_detail(
+                        str(payload.get("feedId") or ""),
+                        str(payload.get("xsecToken") or ""),
+                        load_comments=False,
+                        xsec_source=str(payload.get("xsecSource") or "pc_search"),
+                    )
+                else:
+                    raise
+            if not detail and _handle_manual_verification(client.page, headless, args.manual_verify_timeout):
+                detail = action.get_feed_detail(
+                    str(payload.get("feedId") or ""),
+                    str(payload.get("xsecToken") or ""),
+                    load_comments=False,
+                    xsec_source=str(payload.get("xsecSource") or "pc_search"),
+                )
             print(json.dumps({"ok": bool(detail), "detail": detail}, ensure_ascii=False))
             return 0
 

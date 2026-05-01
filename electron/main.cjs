@@ -5,7 +5,7 @@ const { exec } = require('child_process')
 
 // ─── 加载模块 ─────────────────────────────────────────────
 const { httpRequest } = require('./lib/utils.cjs')
-const { MCP_PORT, MCP_BASE_URL, getMcpBinaryPath, startMcpServer, stopMcpServer, isMcpRunning, mcpGet } = require('./lib/mcp-client.cjs')
+const { MCP_PORT, MCP_BASE_URL, getMcpBinaryPath, startMcpServer, stopMcpServer, isMcpRunning, ensureMcpServer, getLastMcpError, mcpGet } = require('./lib/mcp-client.cjs')
 const { getConfigPath, getLogPath, loadConfig, saveConfig, loadDailyStats, incrementDailyStat } = require('./lib/config.cjs')
 const { loadSeenIds, saveSeenIds, loadSeenUserIds, saveSeenUserIds, resetWatermarks, getLeadsDir } = require('./lib/lead-storage.cjs')
 const { batchEvaluateWithLLM, syncLead } = require('./lib/llm-evaluator.cjs')
@@ -139,9 +139,9 @@ async function checkEnvironment() {
   const binPath = getMcpBinaryPath()
   const binExists = fs.existsSync(binPath)
   results.push({
-    name: 'xiaohongshu-mcp',
+    name: '内置服务程序',
     ok: binExists,
-    version: binExists ? '内置版 v2026.04.17' : '未找到二进制文件',
+    version: binExists ? '已就绪' : '未找到服务程序',
   })
 
   try {
@@ -152,7 +152,11 @@ async function checkEnvironment() {
       version: res.status === 200 ? `运行中 (端口 ${MCP_PORT})` : `异常 (${res.status})`,
     })
   } catch (_) {
-    results.push({ name: 'MCP 服务', ok: false, version: '未运行' })
+    results.push({
+      name: 'MCP 服务',
+      ok: false,
+      version: getLastMcpError() || '未运行',
+    })
   }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -247,6 +251,10 @@ ipcMain.handle('reset-watermarks', () => {
 
 // ─── 小红书扫码登录 ───────────────────────────────────────
 async function getXhsLoginState() {
+  const ready = await ensureMcpServer(sendLog, checkEnvironment)
+  if (!ready) {
+    throw new Error(getLastMcpError() || 'MCP 服务未就绪')
+  }
   const res = await mcpGet('/api/v1/login/status')
   return {
     ok: res.status === 200,
@@ -256,6 +264,15 @@ async function getXhsLoginState() {
 }
 
 async function getXhsQrCode() {
+  const ready = await ensureMcpServer(sendLog, checkEnvironment)
+  if (!ready) {
+    return {
+      ok: false,
+      loggedIn: false,
+      img: '',
+      error: getLastMcpError() || '内置服务未就绪，请查看环境检测',
+    }
+  }
   try {
     const state = await getXhsLoginState()
     if (state.loggedIn) return { ok: true, loggedIn: true, img: '', username: state.username }
@@ -429,7 +446,7 @@ ipcMain.handle('check-xhs-login', async () => {
   }
 })
 
-ipcMain.handle('install-xhs-skills', async () => {
+ipcMain.handle('restart-mcp-service', async () => {
   if (!isMcpRunning()) {
     sendLog('🔄 正在重新启动内置 MCP 服务...', 'info')
     startMcpServer(sendLog, checkEnvironment)

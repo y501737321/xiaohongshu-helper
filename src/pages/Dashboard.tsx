@@ -16,6 +16,7 @@ export default function Dashboard({ logs }: DashboardProps) {
   const [loading, setLoading] = useState(false)
   const [loginStatus, setLoginStatus] = useState<'unknown' | 'checking' | 'logged-in' | 'logged-out' | 'error'>('unknown')
   const [loginName, setLoginName] = useState('')
+  const [loginError, setLoginError] = useState('')
   const [qrImage, setQrImage] = useState('')
   const [qrExpiresAt, setQrExpiresAt] = useState(0)
   const [qrSecondsLeft, setQrSecondsLeft] = useState(0)
@@ -62,14 +63,17 @@ export default function Dashboard({ logs }: DashboardProps) {
     if (state.loggedIn) {
       setLoginStatus('logged-in')
       setLoginName(state.username || '已登录账号')
+      setLoginError('')
       setQrImage('')
       setQrExpiresAt(0)
       setQrSecondsLeft(0)
     } else if (state.ok) {
       setLoginStatus('logged-out')
       setLoginName('')
+      setLoginError('')
     } else {
       setLoginStatus('error')
+      setLoginError(state.error || '内置服务未就绪，请重新检测或重启服务')
     }
   }, [isElectron])
 
@@ -83,6 +87,7 @@ export default function Dashboard({ logs }: DashboardProps) {
       if (result.loggedIn) {
         setLoginStatus('logged-in')
         setLoginName(result.username || '已登录账号')
+        setLoginError('')
         setQrImage('')
         setQrExpiresAt(0)
         setQrSecondsLeft(0)
@@ -90,11 +95,13 @@ export default function Dashboard({ logs }: DashboardProps) {
         const ttl = Math.max(30, Number(result.timeout || 180))
         const expiresAt = Number(result.expiresAt || Date.now() + ttl * 1000)
         setLoginStatus('logged-out')
+        setLoginError('')
         setQrImage(result.img)
         setQrExpiresAt(expiresAt)
         setQrSecondsLeft(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)))
       } else {
         setLoginStatus('error')
+        setLoginError(result.error || '二维码获取失败，请检查内置服务状态')
       }
     } finally {
       qrLoadingRef.current = false
@@ -218,12 +225,14 @@ export default function Dashboard({ logs }: DashboardProps) {
             {loginStatus === 'logged-in' ? <CheckCircle size={18} /> : <QrCode size={18} />}
             <div>
               <div className="xhs-login-title">
-                {loginStatus === 'logged-in' ? '已登录' : loginStatus === 'checking' ? '正在检测' : '未登录'}
+                {loginStatus === 'logged-in' ? '已登录' : loginStatus === 'checking' ? '正在检测' : loginStatus === 'error' ? '服务未就绪' : '未登录'}
               </div>
               <div className="xhs-login-subtitle">
                 {loginStatus === 'logged-in'
                   ? loginName
-                  : isElectron ? '用小红书 App 扫码后开始抓取' : '请在桌面端检测登录状态'}
+                  : loginStatus === 'error'
+                    ? loginError
+                    : isElectron ? '用小红书 App 扫码后开始抓取' : '请在桌面端检测登录状态'}
               </div>
             </div>
           </div>
