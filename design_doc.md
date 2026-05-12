@@ -13,7 +13,7 @@
 - **中间层 (Bridge)**: Electron IPC (Inter-Process Communication)，负责前后端消息传递。
 - **后端引擎 (Core Logic)**: Node.js `child_process` 模块，用于调用和调度本地 Python 脚本。
 - **第三方依赖 (Dependencies)**:
-    - `xiaohongshu-skills`: 负责小红书数据的自动化查询。
+    - `playwright`: 独立 Python Runner 用于小红书浏览器自动化查询。
 - **AI 评估**: OpenAI SDK 格式兼容模型（默认 DeepSeek V4 Flash，另有 MiniMax、智谱、Moonshot 预设）。
 
 ---
@@ -53,6 +53,8 @@
 ## 4. 交付与打包策略 (Packaging)
 - 采用 `electron-builder` 进行打包。
 - 使用 `PyInstaller` 将 `scripts/xiaohongshu_wrapper.py` 编译为单一可执行文件，实现"环境捆绑"，降低用户配置门槛。
+- `scripts/xiaohongshu_wrapper.py` 转发到 `scripts/xhs_browser_cli.py`，不依赖 Codex、Codex Chrome 插件或旧版 `xiaohongshu-skills`。
+- 独立 Runner 支持小红书「筛选」下拉框中已验证的排序依据、笔记类型、发布时间、搜索范围、位置距离筛选；`附近` 需要浏览器定位权限或显式传入经纬度。
 
 ---
 
@@ -65,10 +67,10 @@
 - [x] **Phase 5 (打包配置)**: electron-builder 脚本与预打包 package-deps 逻辑。
 - [x] **Phase 6 (体验优化)**: 去除飞书依赖改用本地 CSV 存储，一键安装环境依赖，去重持久化。
 
-**当前状态**：项目已完成 Phase 1-6 所有核心开发。
+**当前状态**：项目已完成 Phase 1-6 所有核心开发；新增独立 Python Runner，可作为后续 Windows 分发的抓取执行层。
 
 ---
 
 ## 6. 使用特别说明 (Tips)
-- **本地登录**：软件主进程会调用系统终端执行 CLI，请确保在系统终端先手动执行一次小红书登录。
+- **本地登录**：独立 Runner 首次执行 `login` 会打开浏览器扫码；登录态保存在用户本机应用数据目录，后续命令自动复用。
 - **线索文件**：线索保存在应用数据目录下的 `leads/` 文件夹中，可用 Excel / WPS 直接打开 CSV 文件。

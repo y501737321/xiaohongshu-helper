@@ -1,0 +1,2 @@
+-r requirements-xhs-runner.txt
+pyinstaller>=6.0,<7

@@ -1,0 +1,7 @@
+interface:
+  display_name: "小红书 Runner"
+  short_description: "用独立 Python Runner 或已登录 Chrome 搜索、筛选并读取小红书笔记"
+  default_prompt: "Use $xiaohongshu-chrome to search Xiaohongshu with the standalone Python runner when available, apply filters like 最新、图文 or 附近, and extract note cards or details."
+
+policy:
+  allow_implicit_invocation: true
